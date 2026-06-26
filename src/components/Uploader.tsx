@@ -20,6 +20,33 @@ function phaseProgress(status: string, p: number): { pct: number; label: string 
   return null
 }
 
+// Decode any browser-readable image (incl. iOS HEIC) into a downscaled PNG
+// data URL. This normalises format/orientation and keeps huge phone photos
+// fast & reliable for OCR.
+function normalizeImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      const MAX = 1800
+      let { width, height } = img
+      const scale = Math.min(1, MAX / Math.max(width, height))
+      width = Math.round(width * scale)
+      height = Math.round(height * scale)
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { URL.revokeObjectURL(url); reject(new Error('no canvas')); return }
+      ctx.drawImage(img, 0, 0, width, height)
+      URL.revokeObjectURL(url)
+      resolve(canvas.toDataURL('image/png'))
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode failed')) }
+    img.src = url
+  })
+}
+
 function CircularProgress({ pct }: { pct: number }) {
   const r = 52
   const c = 2 * Math.PI * r
@@ -55,34 +82,48 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
   const [progress, setProgress] = useState(0)
   const [status, setStatus] = useState<string>('')
   const [scanning, setScanning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [drag, setDrag] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const reset = () => { setScanning(false); setError(null); setProgress(0); setPreview(null) }
+
   const handleFile = useCallback(async (file: File) => {
-    if (!file.type.startsWith('image/')) return
-    const url = URL.createObjectURL(file)
-    setPreview(url)
+    // Don't silently bail on missing MIME type — mobile gallery picks often
+    // report an empty type. Show the scanning UI immediately for feedback.
+    setError(null)
     setScanning(true)
     setProgress(3)
-    setStatus('Image uploaded · starting scan…')
+    setStatus('Image uploaded · preparing…')
+    setPreview(URL.createObjectURL(file))
+
     try {
-      const { data } = await Tesseract.recognize(file, 'eng', {
+      const normalized = await normalizeImage(file).catch(() => file) // fall back to raw file
+      setProgress(8)
+      setStatus('Starting scan…')
+
+      const recognise = Tesseract.recognize(normalized, 'eng', {
         logger: (m) => {
           const mapped = phaseProgress(m.status || '', m.progress)
           if (mapped) {
-            // never let the bar go backwards between phases
             setProgress((prev) => Math.max(prev, Math.round(mapped.pct)))
             setStatus(mapped.label)
           }
         },
       })
+
+      // Guard against a hung worker (CDN blocked, etc.)
+      const timeout = new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error('timeout')), 60000),
+      )
+
+      const { data } = (await Promise.race([recognise, timeout])) as Awaited<typeof recognise>
       const items = parseItems(data.text)
       setProgress(100)
       setStatus(`Done! Found ${items.length} item${items.length === 1 ? '' : 's'}.`)
       setTimeout(() => onDone(items), 500)
     } catch {
-      setStatus('Could not read that — you can add items manually.')
-      setTimeout(() => onDone([]), 900)
+      setError("Couldn't read that image automatically — but you can add the items by hand, it only takes a moment.")
     }
   }, [onDone])
 
@@ -93,7 +134,7 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
         type="file"
         accept="image/*"
         className="hidden"
-        onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = '' }}
       />
       <AnimatePresence mode="wait">
         {!scanning ? (
@@ -132,26 +173,39 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
             {/* Uploaded image preview with live scan beam */}
             <div className="relative mx-auto mb-6 w-40 overflow-hidden rounded-2xl border border-white/10 shadow-lg">
               {preview && <img src={preview} alt="your bill" className="h-44 w-full object-cover opacity-80" />}
-              <motion.div
-                className="absolute inset-x-0 h-1/3"
-                style={{ background: 'linear-gradient(to bottom, rgba(6,182,212,0), rgba(6,182,212,0.35), rgba(6,182,212,0))' }}
-                animate={{ top: ['-33%', '100%'] }}
-                transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-              />
+              {!error && (
+                <motion.div
+                  className="absolute inset-x-0 h-1/3"
+                  style={{ background: 'linear-gradient(to bottom, rgba(6,182,212,0), rgba(6,182,212,0.35), rgba(6,182,212,0))' }}
+                  animate={{ top: ['-33%', '100%'] }}
+                  transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+                />
+              )}
               <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/50 px-2 py-1 backdrop-blur-sm">
                 <motion.span
-                  className="h-1.5 w-1.5 rounded-full bg-cyan-400"
-                  animate={{ opacity: [1, 0.3, 1] }}
+                  className={`h-1.5 w-1.5 rounded-full ${error ? 'bg-amber-400' : 'bg-cyan-400'}`}
+                  animate={error ? {} : { opacity: [1, 0.3, 1] }}
                   transition={{ duration: 1, repeat: Infinity }}
                 />
-                <span className="text-[10px] font-medium text-white/80">Processing</span>
+                <span className="text-[10px] font-medium text-white/80">{error ? 'Needs attention' : 'Processing'}</span>
               </div>
             </div>
 
-            <CircularProgress pct={progress} />
-
-            <p className="mt-4 text-white/80 text-sm font-medium">{status}</p>
-            <p className="mt-1 text-xs text-white/35">Keeping everything on your device — nothing is uploaded.</p>
+            {error ? (
+              <div>
+                <p className="text-amber-300/90 text-sm px-2">{error}</p>
+                <div className="mt-5 flex flex-col items-center gap-2">
+                  <Button onClick={() => onDone([])}>Add items manually →</Button>
+                  <button onClick={reset} className="text-xs text-white/40 hover:text-white/70">Try another image</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <CircularProgress pct={progress} />
+                <p className="mt-4 text-white/80 text-sm font-medium">{status}</p>
+                <p className="mt-1 text-xs text-white/35">Keeping everything on your device — nothing is uploaded.</p>
+              </>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
