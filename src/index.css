@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #0a0a0f;
+  color: #e7e7ef;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
+}
+
+/* Prevent iOS Safari from auto-zooming when focusing inputs (<16px font triggers it) */
+@media (max-width: 640px) {
+  input, select, textarea { font-size: 16px !important; }
+}
+
+/* Animated aurora background */
+.aurora {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+}
+.aurora::before, .aurora::after {
+  content: ""; position: absolute; width: 60vw; height: 60vw; border-radius: 50%;
+  filter: blur(90px); opacity: 0.5;
+}
+.aurora::before {
+  background: radial-gradient(circle, #7c3aed, transparent 60%);
+  top: -10vw; left: -10vw; animation: float1 18s ease-in-out infinite;
+}
+.aurora::after {
+  background: radial-gradient(circle, #06b6d4, transparent 60%);
+  bottom: -15vw; right: -10vw; animation: float2 22s ease-in-out infinite;
+}
+@keyframes float1 { 50% { transform: translate(20vw, 15vh) scale(1.2); } }
+@keyframes float2 { 50% { transform: translate(-15vw, -10vh) scale(1.1); } }
+
+.glass {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(16px);
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 8px; }
