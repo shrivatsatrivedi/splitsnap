@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import type { ReactNode } from 'react'
+import type { ReactNode, MouseEvent } from 'react'
 
 export const PERSON_COLORS = [
   '#7c3aed', '#06b6d4', '#f59e0b', '#ec4899', '#10b981',
@@ -10,7 +10,7 @@ export function Button({
   children, onClick, variant = 'primary', disabled, className = '', type,
 }: {
   children: ReactNode
-  onClick?: () => void
+  onClick?: (e: MouseEvent) => void
   variant?: 'primary' | 'ghost' | 'soft'
   disabled?: boolean
   className?: string

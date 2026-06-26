@@ -162,7 +162,7 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
             <h3 className="text-xl font-bold">Drop your bill here</h3>
             <p className="mt-1 text-white/50 text-sm">browse files, pick from your gallery, or snap a photo</p>
             <div className="mt-5">
-              <Button onClick={() => inputRef.current?.click()}>Choose image</Button>
+              <Button onClick={(e) => { e.stopPropagation(); inputRef.current?.click() }}>Choose image</Button>
             </div>
             <p className="mt-4 text-xs text-white/30">
               ✨ First scan downloads a small reader (~3 MB) — it may take a few seconds. Instant after that.
