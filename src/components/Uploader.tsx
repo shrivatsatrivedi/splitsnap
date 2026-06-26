@@ -46,7 +46,6 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
         ref={inputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         className="hidden"
         onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
       />
@@ -73,7 +72,7 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
               🧾
             </motion.div>
             <h3 className="text-xl font-bold">Drop your bill here</h3>
-            <p className="mt-1 text-white/50 text-sm">or click to browse · snap a photo on mobile</p>
+            <p className="mt-1 text-white/50 text-sm">browse files, pick from your gallery, or snap a photo</p>
             <div className="mt-5">
               <Button onClick={() => inputRef.current?.click()}>Choose image</Button>
             </div>
