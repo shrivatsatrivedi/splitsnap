@@ -18,9 +18,17 @@ export default function ItemsStep({
     setItems(items.map((it) => (it.id === id ? { ...it, ...patch } : it)))
   const remove = (id: string) => setItems(items.filter((it) => it.id !== id))
   const add = () => setItems([...items, { id: uid(), name: '', qty: 1, price: 0 }])
-
-  const total = items.reduce((s, i) => s + i.price * i.qty, 0)
   const num = (v: string) => Math.max(0, parseFloat(v) || 0)
+
+  // Live preview mirroring the real split math (on the full subtotal here).
+  const subtotal = items.reduce((s, i) => s + i.price * i.qty, 0)
+  const discountAmt =
+    charges.discountType === 'percent' ? (subtotal * charges.discount) / 100 : Math.min(charges.discount, subtotal)
+  const discounted = subtotal - discountAmt
+  const service = (discounted * charges.serviceChargePercent) / 100
+  const taxBase = charges.taxOnService ? discounted + service : discounted
+  const gst = (taxBase * charges.gstPercent) / 100
+  const grand = discounted + service + gst
 
   return (
     <div>
@@ -29,7 +37,7 @@ export default function ItemsStep({
         Scanning isn't perfect — tweak names, quantities and prices, or add anything missing.
       </p>
 
-      <div className="space-y-2 max-h-[42vh] overflow-y-auto pr-1">
+      <div className="space-y-2 max-h-[38vh] overflow-y-auto pr-1">
         <AnimatePresence initial={false}>
           {items.map((it) => (
             <motion.div
@@ -46,16 +54,16 @@ export default function ItemsStep({
                 onChange={(e) => update(it.id, { name: e.target.value })}
                 className="flex-1 bg-transparent outline-none text-sm font-medium placeholder:text-white/30 min-w-0"
               />
-              <div className="flex items-center gap-1 text-white/40 text-xs">×</div>
+              <span className="text-white/40 text-xs">×</span>
               <input
-                type="number" min="1" value={it.qty}
+                type="number" min="1" inputMode="numeric" value={it.qty}
                 onChange={(e) => update(it.id, { qty: Math.max(1, parseInt(e.target.value) || 1) })}
                 className="w-12 bg-white/5 rounded-lg px-2 py-1.5 text-center text-sm outline-none focus:ring-1 ring-cyan-400"
               />
               <div className="flex items-center bg-white/5 rounded-lg px-2 focus-within:ring-1 ring-cyan-400">
                 <span className="text-white/40 text-sm">₹</span>
                 <input
-                  type="number" min="0" step="0.01" value={it.price}
+                  type="number" min="0" step="0.01" inputMode="decimal" value={it.price}
                   onChange={(e) => update(it.id, { price: num(e.target.value) })}
                   className="w-20 bg-transparent px-1 py-1.5 text-sm outline-none"
                 />
@@ -71,27 +79,63 @@ export default function ItemsStep({
 
       <button onClick={add} className="mt-3 text-sm text-cyan-300 hover:text-cyan-200 font-medium">+ Add item</button>
 
-      <div className="mt-6 grid grid-cols-3 gap-3">
-        {([
-          ['GST %', 'gstPercent'],
-          ['Service %', 'serviceChargePercent'],
-          ['Discount ₹', 'discount'],
-        ] as const).map(([label, key]) => (
-          <div key={key} className="glass rounded-2xl p-3">
-            <label className="text-xs text-white/50">{label}</label>
-            <input
-              type="number" min="0" step="0.01"
-              value={charges[key]}
-              onChange={(e) => setCharges({ ...charges, [key]: num(e.target.value) })}
-              className="w-full bg-transparent outline-none text-lg font-bold mt-1"
-            />
+      {/* Charges */}
+      <div className="mt-6 grid grid-cols-2 gap-3">
+        <div className="glass rounded-2xl p-3">
+          <label className="text-xs text-white/50">GST %</label>
+          <input
+            type="number" min="0" step="0.01" inputMode="decimal" value={charges.gstPercent}
+            onChange={(e) => setCharges({ ...charges, gstPercent: num(e.target.value) })}
+            className="w-full bg-transparent outline-none text-lg font-bold mt-1"
+          />
+        </div>
+        <div className="glass rounded-2xl p-3">
+          <label className="text-xs text-white/50">Service charge %</label>
+          <input
+            type="number" min="0" step="0.01" inputMode="decimal" value={charges.serviceChargePercent}
+            onChange={(e) => setCharges({ ...charges, serviceChargePercent: num(e.target.value) })}
+            className="w-full bg-transparent outline-none text-lg font-bold mt-1"
+          />
+        </div>
+        <div className="glass rounded-2xl p-3 col-span-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-white/50">Discount</label>
+            <div className="flex rounded-lg overflow-hidden border border-white/10">
+              {(['flat', 'percent'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setCharges({ ...charges, discountType: t })}
+                  className={`px-2.5 py-1 text-xs font-semibold ${charges.discountType === t ? 'bg-cyan-500/30 text-cyan-200' : 'text-white/40'}`}
+                >
+                  {t === 'flat' ? '₹' : '%'}
+                </button>
+              ))}
+            </div>
           </div>
-        ))}
+          <input
+            type="number" min="0" step="0.01" inputMode="decimal" value={charges.discount}
+            onChange={(e) => setCharges({ ...charges, discount: num(e.target.value) })}
+            className="w-full bg-transparent outline-none text-lg font-bold mt-1"
+          />
+        </div>
       </div>
 
-      <div className="mt-5 flex items-center justify-between text-sm">
-        <span className="text-white/50">Items subtotal</span>
-        <span className="font-bold text-lg">{money(total)}</span>
+      <label className="mt-3 flex items-center gap-2 text-xs text-white/50 cursor-pointer select-none">
+        <input
+          type="checkbox" checked={charges.taxOnService}
+          onChange={(e) => setCharges({ ...charges, taxOnService: e.target.checked })}
+          className="accent-cyan-500"
+        />
+        Apply GST on top of the service charge (typical on Indian restaurant bills)
+      </label>
+
+      {/* Live total preview */}
+      <div className="mt-5 glass rounded-2xl p-4 text-sm space-y-1.5">
+        <div className="flex justify-between text-white/50"><span>Subtotal</span><span className="tabular-nums">{money(subtotal)}</span></div>
+        {discountAmt > 0 && <div className="flex justify-between text-emerald-400/70"><span>Discount</span><span className="tabular-nums">−{money(discountAmt)}</span></div>}
+        {service > 0 && <div className="flex justify-between text-white/50"><span>Service charge</span><span className="tabular-nums">{money(service)}</span></div>}
+        {gst > 0 && <div className="flex justify-between text-white/50"><span>GST</span><span className="tabular-nums">{money(gst)}</span></div>}
+        <div className="flex justify-between font-bold pt-2 border-t border-white/10 text-base"><span>Bill total</span><span className="tabular-nums">{money(grand)}</span></div>
       </div>
 
       <div className="mt-6 flex justify-between">

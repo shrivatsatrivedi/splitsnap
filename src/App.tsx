@@ -17,13 +17,29 @@ export default function App() {
   const [items, setItems] = useState<BillItem[]>([])
   const [people, setPeople] = useState<Person[]>([])
   const [assignments, setAssignments] = useState<Assignments>({})
-  const [charges, setCharges] = useState<Charges>({ gstPercent: 5, serviceChargePercent: 0, discount: 0 })
+  const [charges, setCharges] = useState<Charges>({
+    gstPercent: 5, serviceChargePercent: 0, discount: 0, discountType: 'flat', taxOnService: true,
+  })
   const [history, setHistory] = useState<HistoryEntry[]>(() => getHistory())
 
   const reset = () => {
     setItems([]); setPeople([]); setAssignments({})
-    setCharges({ gstPercent: 5, serviceChargePercent: 0, discount: 0 })
+    setCharges({ gstPercent: 5, serviceChargePercent: 0, discount: 0, discountType: 'flat', taxOnService: true })
     setStep(0)
+  }
+
+  // Assign every currently-unassigned item equally to everyone.
+  const splitRemainingEqually = () => {
+    const next: Assignments = { ...assignments }
+    for (const it of items) {
+      const w = next[it.id] || {}
+      const total = people.reduce((s, p) => s + (w[p.id] || 0), 0)
+      if (total <= 0) {
+        next[it.id] = {}
+        people.forEach((p) => (next[it.id][p.id] = 1))
+      }
+    }
+    setAssignments(next)
   }
 
   const goToResults = () => {
@@ -78,7 +94,7 @@ export default function App() {
               {step === 4 && (
                 <ResultsStep
                   items={items} people={people} assignments={assignments} charges={charges}
-                  onBack={() => setStep(3)} onReset={reset}
+                  onBack={() => setStep(3)} onReset={reset} onFixUnassigned={splitRemainingEqually}
                 />
               )}
             </Card>

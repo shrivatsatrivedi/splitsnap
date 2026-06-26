@@ -13,78 +13,125 @@ export default function AssignStep({
   onNext: () => void
   onBack: () => void
 }) {
-  const assignedQty = (itemId: string) =>
-    Object.values(assignments[itemId] || {}).reduce((s, q) => s + q, 0)
+  const weightsFor = (itemId: string) => assignments[itemId] || {}
+  const totalWeight = (itemId: string) =>
+    people.reduce((s, p) => s + (weightsFor(itemId)[p.id] || 0), 0)
 
-  const setQty = (itemId: string, personId: string, q: number) => {
-    const next = { ...assignments, [itemId]: { ...(assignments[itemId] || {}) } }
-    if (q <= 0) delete next[itemId][personId]
-    else next[itemId][personId] = q
+  const setWeight = (itemId: string, personId: string, w: number) => {
+    const next: Assignments = { ...assignments, [itemId]: { ...weightsFor(itemId) } }
+    if (w <= 0) delete next[itemId][personId]
+    else next[itemId][personId] = w
     setAssignments(next)
   }
 
-  const splitEqually = (item: BillItem) => {
-    const each = item.qty / people.length
-    const map: Record<string, number> = {}
-    people.forEach((p) => (map[p.id] = each))
-    setAssignments({ ...assignments, [item.id]: map })
+  // Tap toggles whether a person shares the item (default weight 1).
+  const toggle = (itemId: string, personId: string) => {
+    const cur = weightsFor(itemId)[personId] || 0
+    setWeight(itemId, personId, cur > 0 ? 0 : 1)
   }
+
+  const setAllForItem = (item: BillItem, on: boolean) => {
+    const next: Assignments = { ...assignments, [item.id]: {} }
+    if (on) people.forEach((p) => (next[item.id][p.id] = 1))
+    setAssignments(next)
+  }
+
+  const everyoneEverything = () => {
+    const next: Assignments = {}
+    items.forEach((it) => {
+      next[it.id] = {}
+      people.forEach((p) => (next[it.id][p.id] = 1))
+    })
+    setAssignments(next)
+  }
+
+  const assignedCount = items.filter((it) => totalWeight(it.id) > 0).length
 
   return (
     <div>
-      <h2 className="text-2xl font-bold">Who ate what?</h2>
-      <p className="text-white/50 text-sm mt-1 mb-5">
-        Tap a person to add their share, or split an item equally. Fractions are fine.
-      </p>
+      <div>
+        <h2 className="text-2xl font-bold">Who shared what?</h2>
+        <p className="text-white/50 text-sm mt-1">
+          Tap everyone who shared an item — its cost splits equally between them. Use −/+ for unequal portions.
+        </p>
+      </div>
 
-      <div className="space-y-3 max-h-[52vh] overflow-y-auto pr-1">
+      <button
+        onClick={everyoneEverything}
+        className="mt-3 mb-4 text-xs font-medium text-cyan-300 hover:text-cyan-200 glass rounded-full px-3 py-1.5"
+      >
+        ⚡ Everyone shared everything equally
+      </button>
+
+      <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
         {items.map((item) => {
-          const used = assignedQty(item.id)
-          const left = +(item.qty - used).toFixed(2)
+          const cost = item.price * item.qty
+          const tw = totalWeight(item.id)
+          const sharers = people.filter((p) => (weightsFor(item.id)[p.id] || 0) > 0)
+          const allEqual = sharers.length > 0 && sharers.every((p) => weightsFor(item.id)[p.id] === 1)
           return (
             <motion.div key={item.id} layout className="glass rounded-2xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <span className="font-semibold">{item.name || 'Unnamed'}</span>
-                  <span className="text-white/40 text-sm ml-2">{item.qty} × {money(item.price)}</span>
+              <div className="flex items-start justify-between mb-3 gap-2">
+                <div className="min-w-0">
+                  <div className="font-semibold truncate">{item.name || 'Unnamed item'}</div>
+                  <div className="text-white/40 text-xs">
+                    {item.qty} × {money(item.price)} = {money(cost)}
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className={`text-xs ${Math.abs(left) < 0.01 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {Math.abs(left) < 0.01 ? '✓ assigned' : `${left} left`}
-                  </span>
-                  <button onClick={() => splitEqually(item)} className="text-xs text-cyan-300 hover:text-cyan-200">
-                    Split equally
-                  </button>
+                <div className="text-right shrink-0">
+                  {tw > 0 ? (
+                    <span className="text-xs text-emerald-300">
+                      {allEqual
+                        ? `Split ${sharers.length} way${sharers.length > 1 ? 's' : ''} · ${money(cost / sharers.length)} each`
+                        : 'Custom split'}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-amber-400/90">Tap who shared it</span>
+                  )}
+                  <div className="mt-1 flex gap-2 justify-end">
+                    <button onClick={() => setAllForItem(item, true)} className="text-[11px] text-cyan-300/80 hover:text-cyan-200">All</button>
+                    {tw > 0 && <button onClick={() => setAllForItem(item, false)} className="text-[11px] text-white/30 hover:text-white/60">Clear</button>}
+                  </div>
                 </div>
               </div>
+
               <div className="flex flex-wrap gap-2">
                 {people.map((p) => {
-                  const q = assignments[item.id]?.[p.id] || 0
-                  const active = q > 0
+                  const w = weightsFor(item.id)[p.id] || 0
+                  const active = w > 0
+                  const amt = active && tw > 0 ? (cost * w) / tw : 0
                   return (
                     <div
                       key={p.id}
-                      className="flex items-center gap-1.5 rounded-full pl-1 pr-1.5 py-1 transition-all"
+                      className="flex items-center gap-1.5 rounded-full pl-1 pr-1.5 py-1 transition-all select-none"
                       style={{
                         background: active ? p.color + '33' : 'rgba(255,255,255,0.04)',
-                        border: `1px solid ${active ? p.color + '88' : 'rgba(255,255,255,0.08)'}`,
+                        border: `1px solid ${active ? p.color + '99' : 'rgba(255,255,255,0.08)'}`,
                       }}
                     >
-                      <button
-                        onClick={() => setQty(item.id, p.id, q + 1)}
-                        className="flex items-center gap-1.5 text-sm font-medium"
-                      >
+                      <button onClick={() => toggle(item.id, p.id)} className="flex items-center gap-1.5 text-sm font-medium">
                         <span className="flex h-6 w-6 items-center justify-center rounded-full text-xs" style={{ background: p.color }}>
                           {p.name.charAt(0).toUpperCase()}
                         </span>
-                        {p.name}
+                        <span className={active ? '' : 'text-white/60'}>{p.name}</span>
                       </button>
                       {active && (
-                        <div className="flex items-center gap-1 ml-1">
-                          <button onClick={() => setQty(item.id, p.id, +(q - 1).toFixed(2))} className="h-5 w-5 rounded-full bg-white/10 hover:bg-white/20 text-xs">−</button>
-                          <span className="text-xs font-bold w-6 text-center">{q % 1 === 0 ? q : q.toFixed(2)}</span>
-                          <button onClick={() => setQty(item.id, p.id, q + 1)} className="h-5 w-5 rounded-full bg-white/10 hover:bg-white/20 text-xs">+</button>
-                        </div>
+                        <>
+                          <span className="text-xs font-semibold tabular-nums" style={{ color: p.color }}>{money(amt)}</span>
+                          <div className="flex items-center gap-0.5 ml-0.5">
+                            <button
+                              onClick={() => setWeight(item.id, p.id, Math.max(0, w - 1))}
+                              className="h-5 w-5 rounded-full bg-black/20 hover:bg-black/40 text-xs leading-none"
+                              title="Smaller portion"
+                            >−</button>
+                            {w > 1 && <span className="text-[10px] text-white/50 w-3 text-center">{w}</span>}
+                            <button
+                              onClick={() => setWeight(item.id, p.id, w + 1)}
+                              className="h-5 w-5 rounded-full bg-black/20 hover:bg-black/40 text-xs leading-none"
+                              title="Bigger portion"
+                            >+</button>
+                          </div>
+                        </>
                       )}
                     </div>
                   )
@@ -95,9 +142,14 @@ export default function AssignStep({
         })}
       </div>
 
-      <div className="mt-6 flex justify-between">
+      <div className="mt-4 text-center text-xs text-white/40">
+        {assignedCount} of {items.length} items assigned
+        {assignedCount < items.length && ' · unassigned items are left out of the split'}
+      </div>
+
+      <div className="mt-5 flex justify-between">
         <Button variant="ghost" onClick={onBack}>← Back</Button>
-        <Button onClick={onNext}>See the split →</Button>
+        <Button onClick={onNext} disabled={assignedCount === 0}>See the split →</Button>
       </div>
     </div>
   )

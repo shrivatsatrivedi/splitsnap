@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Tesseract from 'tesseract.js'
 import { parseItems } from '../lib/parse'
+import { preprocessReceipt } from '../lib/preprocess'
 import type { BillItem } from '../types'
 import { Button } from './ui'
 
@@ -10,41 +11,14 @@ import { Button } from './ui'
 function phaseProgress(status: string, p: number): { pct: number; label: string } | null {
   const prog = isFinite(p) ? p : 0
   if (status.includes('loading tesseract core'))
-    return { pct: 5 + prog * 20, label: 'Downloading the scanner…' }
+    return { pct: 8 + prog * 17, label: 'Downloading the scanner…' }
   if (status.includes('loading language'))
-    return { pct: 25 + prog * 30, label: 'Loading the text reader…' }
-  if (status.includes('initializing'))
-    return { pct: 55 + prog * 10, label: 'Getting ready…' }
+    return { pct: 25 + prog * 25, label: 'Loading the text reader…' }
+  if (status.includes('initiali'))
+    return { pct: 50 + prog * 10, label: 'Getting ready…' }
   if (status.includes('recognizing text'))
-    return { pct: 65 + prog * 35, label: 'Reading your bill…' }
+    return { pct: 62 + prog * 38, label: 'Reading your bill…' }
   return null
-}
-
-// Decode any browser-readable image (incl. iOS HEIC) into a downscaled PNG
-// data URL. This normalises format/orientation and keeps huge phone photos
-// fast & reliable for OCR.
-function normalizeImage(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file)
-    const img = new Image()
-    img.onload = () => {
-      const MAX = 1800
-      let { width, height } = img
-      const scale = Math.min(1, MAX / Math.max(width, height))
-      width = Math.round(width * scale)
-      height = Math.round(height * scale)
-      const canvas = document.createElement('canvas')
-      canvas.width = width
-      canvas.height = height
-      const ctx = canvas.getContext('2d')
-      if (!ctx) { URL.revokeObjectURL(url); reject(new Error('no canvas')); return }
-      ctx.drawImage(img, 0, 0, width, height)
-      URL.revokeObjectURL(url)
-      resolve(canvas.toDataURL('image/png'))
-    }
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode failed')) }
-    img.src = url
-  })
 }
 
 function CircularProgress({ pct }: { pct: number }) {
@@ -89,20 +63,28 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
   const reset = () => { setScanning(false); setError(null); setProgress(0); setPreview(null) }
 
   const handleFile = useCallback(async (file: File) => {
-    // Don't silently bail on missing MIME type — mobile gallery picks often
-    // report an empty type. Show the scanning UI immediately for feedback.
     setError(null)
     setScanning(true)
     setProgress(3)
-    setStatus('Image uploaded · preparing…')
+    setStatus('Enhancing the image…')
     setPreview(URL.createObjectURL(file))
 
+    let worker: Tesseract.Worker | null = null
     try {
-      const normalized = await normalizeImage(file).catch(() => file) // fall back to raw file
-      setProgress(8)
+      // 1) Preprocess (grayscale, contrast, binarize, scale) for better OCR.
+      let ocrInput: string | File = file
+      try {
+        const { dataUrl, previewUrl } = await preprocessReceipt(file)
+        ocrInput = dataUrl
+        setPreview(previewUrl)
+      } catch {
+        /* fall back to the raw file if preprocessing fails */
+      }
+      setProgress(6)
       setStatus('Starting scan…')
 
-      const recognise = Tesseract.recognize(normalized, 'eng', {
+      // 2) OCR with a receipt-tuned worker.
+      worker = await Tesseract.createWorker('eng', 1, {
         logger: (m) => {
           const mapped = phaseProgress(m.status || '', m.progress)
           if (mapped) {
@@ -111,19 +93,30 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
           }
         },
       })
+      await worker.setParameters({
+        tessedit_pageseg_mode: '4' as Tesseract.PSM, // single column of variable-size text
+        preserve_interword_spaces: '1',
+      })
 
-      // Guard against a hung worker (CDN blocked, etc.)
       const timeout = new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error('timeout')), 60000),
+        setTimeout(() => rej(new Error('timeout')), 75000),
       )
-
+      const recognise = worker.recognize(ocrInput)
       const { data } = (await Promise.race([recognise, timeout])) as Awaited<typeof recognise>
-      const items = parseItems(data.text)
+
+      const { items, confidence } = parseItems(data.text)
       setProgress(100)
+
+      if (confidence === 'none' || items.length === 0) {
+        setError("I couldn't read any items from that image. Add them by hand below — it's quick.")
+        return
+      }
       setStatus(`Done! Found ${items.length} item${items.length === 1 ? '' : 's'}.`)
       setTimeout(() => onDone(items), 500)
     } catch {
       setError("Couldn't read that image automatically — but you can add the items by hand, it only takes a moment.")
+    } finally {
+      worker?.terminate().catch(() => {})
     }
   }, [onDone])
 
@@ -165,12 +158,11 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
               <Button onClick={(e) => { e.stopPropagation(); inputRef.current?.click() }}>Choose image</Button>
             </div>
             <p className="mt-4 text-xs text-white/30">
-              ✨ First scan downloads a small reader (~3 MB) — it may take a few seconds. Instant after that.
+              📸 Tip: a flat, well-lit, straight-on photo scans best. First scan downloads a ~3 MB reader.
             </p>
           </motion.div>
         ) : (
           <motion.div key="scan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center">
-            {/* Uploaded image preview with live scan beam */}
             <div className="relative mx-auto mb-6 w-40 overflow-hidden rounded-2xl border border-white/10 shadow-lg">
               {preview && <img src={preview} alt="your bill" className="h-44 w-full object-cover opacity-80" />}
               {!error && (
