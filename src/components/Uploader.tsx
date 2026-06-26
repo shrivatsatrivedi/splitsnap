@@ -5,6 +5,51 @@ import { parseItems } from '../lib/parse'
 import type { BillItem } from '../types'
 import { Button } from './ui'
 
+// Map Tesseract's phases onto a single 0–100 bar so the loader keeps moving
+// through the (otherwise silent) download + init phases, not just recognition.
+function phaseProgress(status: string, p: number): { pct: number; label: string } | null {
+  const prog = isFinite(p) ? p : 0
+  if (status.includes('loading tesseract core'))
+    return { pct: 5 + prog * 20, label: 'Downloading the scanner…' }
+  if (status.includes('loading language'))
+    return { pct: 25 + prog * 30, label: 'Loading the text reader…' }
+  if (status.includes('initializing'))
+    return { pct: 55 + prog * 10, label: 'Getting ready…' }
+  if (status.includes('recognizing text'))
+    return { pct: 65 + prog * 35, label: 'Reading your bill…' }
+  return null
+}
+
+function CircularProgress({ pct }: { pct: number }) {
+  const r = 52
+  const c = 2 * Math.PI * r
+  const clamped = Math.max(0, Math.min(100, pct))
+  return (
+    <div className="relative mx-auto h-32 w-32">
+      <svg className="h-32 w-32 -rotate-90" viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="8" />
+        <motion.circle
+          cx="60" cy="60" r={r} fill="none"
+          stroke="url(#grad)" strokeWidth="8" strokeLinecap="round"
+          strokeDasharray={c}
+          animate={{ strokeDashoffset: c - (c * clamped) / 100 }}
+          transition={{ ease: 'easeOut', duration: 0.4 }}
+        />
+        <defs>
+          <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#7c3aed" />
+            <stop offset="100%" stopColor="#06b6d4" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-2xl font-extrabold">{Math.round(clamped)}%</span>
+        <span className="text-[10px] uppercase tracking-wider text-white/40">scanning</span>
+      </div>
+    </div>
+  )
+}
+
 export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => void }) {
   const [preview, setPreview] = useState<string | null>(null)
   const [progress, setProgress] = useState(0)
@@ -18,25 +63,26 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
     const url = URL.createObjectURL(file)
     setPreview(url)
     setScanning(true)
-    setProgress(0)
-    setStatus('Warming up the scanner…')
+    setProgress(3)
+    setStatus('Image uploaded · starting scan…')
     try {
       const { data } = await Tesseract.recognize(file, 'eng', {
         logger: (m) => {
-          if (m.status === 'recognizing text') {
-            setProgress(Math.round(m.progress * 100))
-            setStatus('Reading your bill…')
-          } else if (m.status) {
-            setStatus(m.status.replace(/^\w/, (c) => c.toUpperCase()) + '…')
+          const mapped = phaseProgress(m.status || '', m.progress)
+          if (mapped) {
+            // never let the bar go backwards between phases
+            setProgress((prev) => Math.max(prev, Math.round(mapped.pct)))
+            setStatus(mapped.label)
           }
         },
       })
       const items = parseItems(data.text)
-      setStatus('Done!')
-      setTimeout(() => onDone(items), 350)
+      setProgress(100)
+      setStatus(`Done! Found ${items.length} item${items.length === 1 ? '' : 's'}.`)
+      setTimeout(() => onDone(items), 500)
     } catch {
       setStatus('Could not read that — you can add items manually.')
-      setTimeout(() => onDone([]), 800)
+      setTimeout(() => onDone([]), 900)
     }
   }, [onDone])
 
@@ -53,6 +99,7 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
         {!scanning ? (
           <motion.div
             key="drop"
+            exit={{ opacity: 0 }}
             onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
             onDragLeave={() => setDrag(false)}
             onDrop={(e) => {
@@ -82,24 +129,29 @@ export default function Uploader({ onDone }: { onDone: (items: BillItem[]) => vo
           </motion.div>
         ) : (
           <motion.div key="scan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center">
-            <div className="relative mx-auto mb-6 w-full max-w-xs overflow-hidden rounded-2xl border border-white/10">
-              {preview && <img src={preview} alt="bill" className="w-full object-cover opacity-80" />}
+            {/* Uploaded image preview with live scan beam */}
+            <div className="relative mx-auto mb-6 w-40 overflow-hidden rounded-2xl border border-white/10 shadow-lg">
+              {preview && <img src={preview} alt="your bill" className="h-44 w-full object-cover opacity-80" />}
               <motion.div
-                className="absolute inset-x-0 h-1/3 bg-gradient-to-b from-cyan-400/0 via-cyan-400/30 to-cyan-400/0"
+                className="absolute inset-x-0 h-1/3"
+                style={{ background: 'linear-gradient(to bottom, rgba(6,182,212,0), rgba(6,182,212,0.35), rgba(6,182,212,0))' }}
                 animate={{ top: ['-33%', '100%'] }}
                 transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-                style={{ position: 'absolute' }}
               />
+              <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/50 px-2 py-1 backdrop-blur-sm">
+                <motion.span
+                  className="h-1.5 w-1.5 rounded-full bg-cyan-400"
+                  animate={{ opacity: [1, 0.3, 1] }}
+                  transition={{ duration: 1, repeat: Infinity }}
+                />
+                <span className="text-[10px] font-medium text-white/80">Processing</span>
+              </div>
             </div>
-            <p className="text-white/70 text-sm mb-3">{status}</p>
-            <div className="mx-auto h-2 max-w-xs overflow-hidden rounded-full bg-white/10">
-              <motion.div
-                className="h-full bg-gradient-to-r from-violet-500 to-cyan-400"
-                animate={{ width: `${progress}%` }}
-                transition={{ ease: 'easeOut' }}
-              />
-            </div>
-            <p className="mt-2 text-xs text-white/40">{progress}%</p>
+
+            <CircularProgress pct={progress} />
+
+            <p className="mt-4 text-white/80 text-sm font-medium">{status}</p>
+            <p className="mt-1 text-xs text-white/35">Keeping everything on your device — nothing is uploaded.</p>
           </motion.div>
         )}
       </AnimatePresence>
